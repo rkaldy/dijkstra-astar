@@ -5,6 +5,7 @@
 #include <tuple>
 #include <sstream>
 #include <cmath>
+//#define ASTAR_DEBUG_LOGGING
 #include "../astar.hpp"
 
 

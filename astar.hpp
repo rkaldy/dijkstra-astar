@@ -25,16 +25,15 @@
  */
 
 #include <vector>
+#include <unordered_map>
 #include <limits>
 #include <functional>
 #include <algorithm>
 #include <iostream>
 #include <boost/heap/fibonacci_heap.hpp>
-#include <boost/multi_index_container.hpp>
-#include <boost/multi_index/member.hpp>
-#include <boost/multi_index/hashed_index.hpp>
 #define BOOST_COROUTINES_NO_DEPRECATION_WARNING
 #include <boost/coroutine/coroutine.hpp>
+#include <sstream>
 
 #ifdef ASTAR_DEBUG_LOGGING
 #include <iostream>
@@ -48,70 +47,32 @@ template <typename Vertex, typename Edge, typename Dist, typename FinalParam = c
 class astar {
 
 protected:
-    struct node;
-
-    struct node_comparator {
-        bool operator()(const node* a, const node* b) const {
-            return a->dist + a->fdist > b->dist + b->fdist;
-        }
-    };
-	
-   	typedef typename boost::heap::fibonacci_heap<node*, boost::heap::compare<node_comparator>> priority_queue;
-    typedef typename priority_queue::handle_type queue_handle_type;
- 	priority_queue queue;
-
-    struct node {
+	struct queue_entry {
 		Vertex vertex;
-		Dist dist;
-		Dist fdist;
-		node* prev;
-		Edge prev_edge;
-		queue_handle_type queue_handle{};
+		Dist priority;
 	};
 
-
-	typedef typename boost::multi_index_container<
-		node, 
-		boost::multi_index::indexed_by<
-			boost::multi_index::hashed_unique<
-				boost::multi_index::member<node, Vertex, &node::vertex>, 
-				VertexHash
-			>
-		>
-	> nodeset;
-	nodeset nodes;
-
-
-	struct node_inserter {
-        priority_queue& queue;
-		Dist fdist;
-
-        node_inserter(Dist fdist, priority_queue& queue) : fdist(fdist), queue(queue)
-        {}
-
-		void operator()(node& node) {
-			node.fdist = fdist;
-			node.queue_handle = queue.push(&node);
+	class node_comparator {
+	public:
+		bool operator()(const queue_entry& a, const queue_entry& b) const {
+			return a.priority < b.priority;
 		}
 	};
 
-    struct node_updater {
-        Dist dist;
-        node* prev;
-        Edge prev_edge;
-        priority_queue& queue;
+   	typedef typename boost::heap::fibonacci_heap<queue_entry, boost::heap::compare<node_comparator>> queue_type;
+	typedef typename queue_type::handle_type handle_type;
 
-        node_updater(Dist dist, node* prev, Edge prev_edge, priority_queue& queue) :
-            dist(dist), prev(prev), prev_edge(prev_edge), queue(queue) 
-        {}
 
-        void operator()(node& node) {
-            node.dist = dist;
-            node.prev = prev;
-            node.prev_edge = prev_edge;
-		    queue.increase(node.queue_handle, &node);
-        }
-    };
+    struct node {
+		handle_type queue_handle;
+		Dist dist;
+		Dist fdist;
+		Vertex prev_vertex;
+		Edge prev_edge;
+	};
+
+	std::unordered_map<Vertex, node, VertexHash> nodes;
+	queue_type queue;
 
 public:
     typedef struct {
@@ -180,32 +141,40 @@ public:
 		nodes.clear();
 		queue.clear();
 
-		typename nodeset::iterator it = nodes.insert({start, 0, 0, nullptr}).first;
-		nodes.modify(it, node_inserter(heuristic(start, final_param), queue));
+		Dist fdist_start = heuristic(start, final_param);
+		nodes[start] = { queue.push({ start, -fdist_start }), 0, fdist_start, start };
 
 		while (!queue.empty()) {
-			node* from = queue.top();
-			if (is_final(from->vertex, final_param)) {
+			Vertex from_vertex = queue.top().vertex;
+			queue.pop();
+
+			node& from = nodes[from_vertex];
+			if (is_final(from_vertex, final_param)) {
 				return true;
 			}
-			queue.pop();
-			LOG("Starting from " << from->vertex << " (dist=" << from->dist << ", fdist=" << from->fdist << ")");
+			LOG("Starting from " << from_vertex << " (dist=" << from.dist << ", fdist=" << from.fdist << ", qh=" << &*from.queue_handle << ")");
 	
-            typename boost::coroutines::coroutine<adjacent_edge>::pull_type adjacency_source(bind(adjacent, std::placeholders::_1, from->vertex));
+            typename boost::coroutines::coroutine<adjacent_edge>::pull_type adjacency_source(bind(adjacent, std::placeholders::_1, from_vertex));
 			for (adjacent_edge& neighbor : adjacency_source) {
-				Dist new_dist = from->dist + neighbor.len;
-				auto res = nodes.insert({neighbor.vertex, new_dist, 0, from, neighbor.edge});
-				typename nodeset::iterator to = res.first;
-				LOG("  try " << to->vertex << " (dist=" << to->dist << ", new_dist=" << new_dist << ")");
-				if (res.second) {
-                    if (nodes.size() <= max_visited_nodes) {
-    					nodes.modify(to, node_inserter(heuristic(neighbor.vertex, final_param), queue));
-						LOG("    new node (fdist=" << to->fdist << ")");
-                    }
-				} 
-				else if (new_dist < to->dist) {
-                    nodes.modify(to, node_updater(new_dist, from, neighbor.edge, queue));
-					LOG("    node updated");
+				Dist new_dist = from.dist + neighbor.len;
+				LOG("  try " << neighbor.vertex << " (new_dist=" << new_dist << ")");
+				auto it = nodes.find(neighbor.vertex);
+				if (it == nodes.end()) {
+					if (nodes.size() <= max_visited_nodes) {
+						Dist fdist = heuristic(neighbor.vertex, final_param);
+						LOG("    new node (dist=" << new_dist<< ", fdist=" << fdist << ")");
+						nodes[neighbor.vertex] = { queue.push({ neighbor.vertex, -(new_dist + fdist) }), new_dist, fdist, from_vertex, neighbor.edge };
+					}
+				} else {
+					node& to = it->second;
+					if (new_dist < to.dist) {
+						LOG("    update node (dist " << to.dist << "->" << new_dist << ", fdist=" << to.fdist << ")");
+						to.dist = new_dist;
+						to.prev_vertex = from_vertex;
+						to.prev_edge = neighbor.edge;
+						(*to.queue_handle).priority = -(new_dist + to.fdist);
+						queue.increase(to.queue_handle);
+					}
 				}
 			}
 		}
@@ -214,27 +183,28 @@ public:
 
 
 	Dist shortest_path_len() const {
-		return queue.top()->dist;
+		auto it = nodes.find(queue.top().vertex);
+		return it->second.dist;
 	}
 
 	std::vector<Vertex> shortest_path_vertices() const {
 		std::vector<Vertex> path;
-		const node* n = queue.top();
-		while (n->prev) {
-			path.push_back(n->vertex);
-			n = n->prev;
+		auto it = nodes.find(queue.top().vertex);
+		while (!(it->first == it->second.prev_vertex)) {
+			path.push_back(it->first);
+			it = nodes.find(it->second.prev_vertex);
 		}
-		path.push_back(n->vertex);
+		path.push_back(it->first);
 		std::reverse(path.begin(), path.end());
 		return path;
 	}
 
 	std::vector<Edge> shortest_path_edges() const {
 		std::vector<Edge> path;
-		const node* n = queue.top();
-		while (n->prev) {
-			path.push_back(n->prev_edge);
-			n = n->prev;
+		auto it = nodes.find(queue.top().vertex);
+		while (!(it->first == it->second.prev_vertex)) {
+			path.push_back(it->second.prev_edge);
+			it = nodes.find(it->second.prev_vertex);
 		}
 		std::reverse(path.begin(), path.end());
         return path;
