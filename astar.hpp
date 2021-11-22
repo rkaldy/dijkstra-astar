@@ -146,12 +146,11 @@ public:
 
 		while (!queue.empty()) {
 			Vertex from_vertex = queue.top().vertex;
-			queue.pop();
-
 			node& from = nodes[from_vertex];
 			if (is_final(from_vertex, final_param)) {
 				return true;
 			}
+			queue.pop();
 			LOG("Starting from " << from_vertex << " (dist=" << from.dist << ", fdist=" << from.fdist << ", qh=" << &*from.queue_handle << ")");
 	
             typename boost::coroutines::coroutine<adjacent_edge>::pull_type adjacency_source(bind(adjacent, std::placeholders::_1, from_vertex));
