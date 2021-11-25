@@ -150,9 +150,10 @@ public:
 			if (is_final(from_vertex, final_param)) {
 				return true;
 			}
+			LOG("Starting from " << from_vertex << " (dist=" << from.dist << ", fdist=" << from.fdist << ")");
 			queue.pop();
-			LOG("Starting from " << from_vertex << " (dist=" << from.dist << ", fdist=" << from.fdist << ", qh=" << &*from.queue_handle << ")");
-	
+            from.queue_handle.node_ = nullptr;
+
             typename boost::coroutines::coroutine<adjacent_edge>::pull_type adjacency_source(bind(adjacent, std::placeholders::_1, from_vertex));
 			for (adjacent_edge& neighbor : adjacency_source) {
 				Dist new_dist = from.dist + neighbor.len;
@@ -171,8 +172,12 @@ public:
 						to.dist = new_dist;
 						to.prev_vertex = from_vertex;
 						to.prev_edge = neighbor.edge;
-						(*to.queue_handle).priority = -(new_dist + to.fdist);
-						queue.increase(to.queue_handle);
+                        if (to.queue_handle.node_ == nullptr) {
+                            to.queue_handle = queue.push({ neighbor.vertex, -(new_dist + to.fdist) });
+                        } else {
+    						(*to.queue_handle).priority = -(new_dist + to.fdist);
+	    					queue.increase(to.queue_handle);
+                        }
 					}
 				}
 			}
