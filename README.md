@@ -3,7 +3,7 @@
 Header-only C++ templates that implement [Dijkstra's](https://en.wikipedia.org/wiki/Dijkstra%27s_algorithm) and [A\*](https://en.wikipedia.org/wiki/A\*_search_algorithm) shortest path algorithms. The code is designed to be graph-agnostic: you provide lightweight callbacks that enumerate adjacent vertices, optional goal checks, and (for A\*) admissible heuristics. Both solvers then return the shortest distance together with the sequence of vertices and edges that achieve it.
 
 ## Features
-- Header-only implementation: drop `dijkstra.hpp` and/or `astar.hpp` into an existing build without modifying your project layout.
+- Header-only implementation: drop `dijkstra.hpp` and/or `astar.hpp` into an existing build without modifying your project layout. 
 - Works with arbitrary vertex and edge types. Templated hash support lets you plug in structured keys.
 - Coroutine-based adjacency interface allows you to stream outgoing edges without materialising full adjacency lists.
 - Customizable termination (`FinalParam`) and optional node-visitation limits for bounded searches.
